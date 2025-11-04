@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html>
 <head>
@@ -20,6 +19,7 @@
 <body>
 <canvas id="gameCanvas"></canvas>
 <img id="enemySprite" src="Obunga_in_Parking_Lot.webp" style="display:none;" />
+<img id="enemySprite2" src="your_second_enemy_image.webp" style="display:none;" />
 <script>
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
@@ -63,21 +63,34 @@ const FOV = Math.PI / 3;
 let keys = {};
 let health = 100;
 
-let enemyX = TILE_SIZE * (MAP_WIDTH - 2);
-let enemyY = TILE_SIZE * (MAP_HEIGHT - 2);
-const enemySpeed = 1.0;
-const enemyImg = document.getElementById("enemySprite");
+let enemyX = TILE_SIZE * 5;
+let enemyY = TILE_SIZE * 5;
 let enemyStunned = false;
 let stunTimer = 0;
+
+let enemy2X = TILE_SIZE * 8;
+let enemy2Y = TILE_SIZE * 8;
+let enemy2Stunned = false;
+let enemy2StunTimer = 0;
+
+const enemyImg = document.getElementById("enemySprite");
+const enemyImg2 = document.getElementById("enemySprite2");
+
 let canShoot = true;
 let lastHitTime = 0;
 let laserTimer = 0;
 let laserStart = null;
 let laserEnd = null;
 
+let gameStarted = false;
+
 document.addEventListener("keydown", e => {
   keys[e.key] = true;
-  if (e.code === "Space" && canShoot) {
+  if (!gameStarted && e.code === "Enter") {
+    gameStarted = true;
+    gameLoop();
+  }
+  if (gameStarted && e.code === "Space" && canShoot) {
     shoot();
     canShoot = false;
     setTimeout(() => canShoot = true, 500);
@@ -86,7 +99,7 @@ document.addEventListener("keydown", e => {
 document.addEventListener("keyup", e => keys[e.key] = false);
 
 function updatePlayer() {
-  const moveSpeed = 2;
+  const moveSpeed = 1;
   const turnSpeed = 0.03;
 
   if (keys["ArrowLeft"]) dir -= turnSpeed;
@@ -112,89 +125,78 @@ function updatePlayer() {
   }
 }
 
-let enemyStuckTimer = 0;
-let lastEnemyX = enemyX;
-let lastEnemyY = enemyY;
-
-function updateEnemy() {
+function updateEnemy(x, y, stunned, stunTimer, damage) {
   const speed = 1.5;
-  const dx = posX - enemyX;
-  const dy = posY - enemyY;
+  const dx = posX - x;
+  const dy = posY - y;
   const dist = Math.hypot(dx, dy);
   const dirX = dx / dist;
   const dirY = dy / dist;
 
-  const nextX = enemyX + dirX * speed;
-  const nextY = enemyY + dirY * speed;
+  let nextX = x + dirX * speed;
+  let nextY = y + dirY * speed;
 
   const tileX = Math.floor(nextX / TILE_SIZE);
-  const tileY = Math.floor(enemyY / TILE_SIZE);
+  const tileY = Math.floor(y / TILE_SIZE);
   const tileY2 = Math.floor(nextY / TILE_SIZE);
-  const tileX2 = Math.floor(enemyX / TILE_SIZE);
+  const tileX2 = Math.floor(x / TILE_SIZE);
 
-  let moved = false;
+  if (map[tileY]?.[tileX] === 0) x = nextX;
+  if (map[tileY2]?.[tileX2] === 0) y = nextY;
 
-  if (map[tileY]?.[tileX] === 0) {
-    enemyX = nextX;
-    moved = true;
-  }
-  if (map[tileY2]?.[tileX2] === 0) {
-    enemyY = nextY;
-    moved = true;
+  const distToPlayer = Math.hypot(x - posX, y - posY);
+  if (!stunned && distToPlayer < 40 && Date.now() - lastHitTime > 1000) {
+    health -= damage;
+    lastHitTime = Date.now();
   }
 
-  // Check if stuck
-  if (!moved) {
-    enemyStuckTimer++;
-  } else {
-    enemyStuckTimer = 0;
+  if (stunned) {
+    stunTimer--;
+    if (stunTimer <= 0) stunned = false;
   }
 
-  // If stuck for too long, teleport to nearby open tile
-  if (enemyStuckTimer > 60) {
-    for (let i = 0; i < 10; i++) {
-      const offsetX = Math.floor(Math.random() * 5 - 2);
-      const offsetY = Math.floor(Math.random() * 5 - 2);
-      const tx = Math.floor(enemyX / TILE_SIZE) + offsetX;
-      const ty = Math.floor(enemyY / TILE_SIZE) + offsetY;
-      if (map[ty]?.[tx] === 0) {
-        enemyX = tx * TILE_SIZE + TILE_SIZE / 2;
-        enemyY = ty * TILE_SIZE + TILE_SIZE / 2;
-        enemyStuckTimer = 0;
-        break;
-      }
-    }
-  }
+  return [x, y, stunned, stunTimer];
+}
 
-  lastEnemyX = enemyX;
-  lastEnemyY = enemyY;
+function updateEnemies() {
+  [enemyX, enemyY, enemyStunned, stunTimer] = updateEnemy(enemyX, enemyY, enemyStunned, stunTimer, 10);
+  [enemy2X, enemy2Y, enemy2Stunned, enemy2StunTimer] = updateEnemy(enemy2X, enemy2Y, enemy2Stunned, enemy2StunTimer, 40);
 }
 
 function shoot() {
-  const dx = enemyX - posX;
-  const dy = enemyY - posY;
-  const angleToEnemy = Math.atan2(dy, dx);
-  const angleDiff = Math.abs(angleToEnemy - dir);
-  const dist = Math.sqrt(dx * dx + dy * dy);
+  laserTimer = 10;
+  laserStart = { x: posX, y: posY };
+  laserEnd = {
+    x: posX + Math.cos(dir) * 300,
+    y: posY + Math.sin(dir) * 300
+  };
 
-  if (angleDiff < 0.3 && dist < 300) {
-    let blocked = false;
-    for (let d = 0; d < dist; d += 4) {
-      const testX = Math.floor((posX + Math.cos(angleToEnemy) * d) / TILE_SIZE);
-      const testY = Math.floor((posY + Math.sin(angleToEnemy) * d) / TILE_SIZE);
-      if (map[testY]?.[testX] === 1) {
-        blocked = true;
-        break;
+  [
+    [enemyX, enemyY, val => enemyStunned = val, val => stunTimer = val],
+    [enemy2X, enemy2Y, val => enemy2Stunned = val, val => enemy2StunTimer = val]
+  ].forEach(([ex, ey, setStun, setTimer]) => {
+    const dx = ex - posX;
+    const dy = ey - posY;
+    const angleToEnemy = Math.atan2(dy, dx);
+    const angleDiff = Math.abs(angleToEnemy - dir);
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (angleDiff < 0.3 && dist < 300) {
+      let blocked = false;
+      for (let d = 0; d < dist; d += 4) {
+        const testX = Math.floor((posX + Math.cos(angleToEnemy) * d) / TILE_SIZE);
+        const testY = Math.floor((posY + Math.sin(angleToEnemy) * d) / TILE_SIZE);
+        if (map[testY]?.[testX] === 1) {
+          blocked = true;
+          break;
+        }
+      }
+      if (!blocked) {
+        setStun(true);
+        setTimer(180);
       }
     }
-    if (!blocked) {
-      enemyStunned = true;
-      stunTimer = 180;
-      laserTimer = 10;
-      laserStart = { x: posX, y: posY };
-      laserEnd = { x: enemyX, y: enemyY };
-    }
-  }
+  });
 }
 
 function castRays() {
@@ -228,9 +230,9 @@ function castRays() {
   }
 }
 
-function drawEnemyIn3D() {
-  const dx = enemyX - posX;
-  const dy = enemyY - posY;
+function drawEnemyIn3D(x, y, img) {
+  const dx = x - posX;
+  const dy = y - posY;
   const angleToEnemy = Math.atan2(dy, dx);
   let angleDiff = angleToEnemy - dir;
 
@@ -242,7 +244,7 @@ function drawEnemyIn3D() {
     let blocked = false;
     for (let d = 0; d < distToEnemy; d += 4) {
       const testX = Math.floor((posX + Math.cos(angleToEnemy) * d) / TILE_SIZE);
-            const testY = Math.floor((posY + Math.sin(angleToEnemy) * d) / TILE_SIZE);
+      const testY = Math.floor((posY + Math.sin(angleToEnemy) * d) / TILE_SIZE);
       if (map[testY]?.[testX] === 1) {
         blocked = true;
         break;
@@ -257,14 +259,14 @@ function drawEnemyIn3D() {
       const spriteSize = enemyHeight;
       const spriteY = canvas.height / 2 - spriteSize / 2;
 
-      ctx.drawImage(enemyImg, screenX - spriteSize / 2, spriteY, spriteSize, spriteSize);
+      ctx.drawImage(img, screenX - spriteSize / 2, spriteY, spriteSize, spriteSize);
     }
   }
 }
 
 function drawLaser() {
   if (laserTimer > 0 && laserStart && laserEnd) {
-    ctx.strokeStyle = "red";
+    ctx.strokeStyle = "blue";
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(
@@ -325,19 +327,45 @@ function drawMinimap() {
   ctx.lineTo(px + dx, py + dy);
   ctx.stroke();
 
-  const ex = offsetX + (enemyX / TILE_SIZE) * scale;
-  const ey = offsetY + (enemyY / TILE_SIZE) * scale;
+  const ex1 = offsetX + (enemyX / TILE_SIZE) * scale;
+  const ey1 = offsetY + (enemyY / TILE_SIZE) * scale;
   ctx.fillStyle = "red";
   ctx.beginPath();
-  ctx.arc(ex, ey, 3, 0, Math.PI * 2);
+  ctx.arc(ex1, ey1, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  const ex2 = offsetX + (enemy2X / TILE_SIZE) * scale;
+  const ey2 = offsetY + (enemy2Y / TILE_SIZE) * scale;
+  ctx.fillStyle = "orange";
+  ctx.beginPath();
+  ctx.arc(ex2, ey2, 3, 0, Math.PI * 2);
   ctx.fill();
 }
 
+function drawMainMenu() {
+  ctx.fillStyle = "black";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "white";
+  ctx.font = "bold 48px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("Raycasting Maze Game", canvas.width / 2, canvas.height / 2 - 60);
+  ctx.font = "24px sans-serif";
+  ctx.fillText("Press ENTER to start", canvas.width / 2, canvas.height / 2);
+  ctx.fillText("Arrow keys to move, SPACE to shoot", canvas.width / 2, canvas.height / 2 + 40);
+}
+
 function gameLoop() {
+  if (!gameStarted) {
+    drawMainMenu();
+    requestAnimationFrame(gameLoop);
+    return;
+  }
+
   updatePlayer();
-  updateEnemy();
+  updateEnemies();
   castRays();
-  drawEnemyIn3D();
+  drawEnemyIn3D(enemyX, enemyY, enemyImg);
+  drawEnemyIn3D(enemy2X, enemy2Y, enemyImg2);
   drawLaser();
   drawHealthBar();
   drawMinimap();
