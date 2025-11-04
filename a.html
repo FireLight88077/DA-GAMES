@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Ultimate Racing Game</title>
+  <style>
+    canvas {
+      background: #eee;
+      display: block;
+      margin: 0 auto;
+      border: 2px solid #333;
+    }
+  </style>
+</head>
+<body>
+<canvas id="gameCanvas" width="1200" height="600"></canvas>
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+let currentMap = 0;
+let raceFinished = false;
+let finishTimer = 0;
+let paused = false;
+let gameState = "menu";
+let multiplayer = false;
+let player2 = null;
+const keys = {};
+
+let customization = {
+  bodyColor: "red",
+  wheelSize: 5,
+  bodyType: "compact"
+};
+
+function randomCustomization() {
+  const colors = ["red", "blue", "green", "orange", "purple"];
+  const types = ["compact", "sedan", "truck"];
+  const wheelSizes = [5, 8];
+  return {
+    bodyColor: colors[Math.floor(Math.random() * colors.length)],
+    bodyType: types[Math.floor(Math.random() * types.length)],
+    wheelSize: wheelSizes[Math.floor(Math.random() * wheelSizes.length)]
+  };
+}
+
+function catmullRom(p0, p1, p2, p3, t) {
+  return 0.5 * (
+    (2 * p1) +
+    (-p0 + p2) * t +
+    (2*p0 - 5*p1 + 4*p2 - p3) * t * t +
+    (-p0 + 3*p1 - 3*p2 + p3) * t * t * t
+  );
+}
+
+function generateRandomMap(numPoints = 20) {
+  const waypoints = [];
+  let x = 100;
+  let y = 300;
+  let angle = 0;
+  waypoints.push({ x, y });
+
+  for (let i = 0; i < numPoints - 2; i++) {
+    angle += (Math.random() - 0.5) * Math.PI / 4;
+    const distance = 200 + Math.random() * 150;
+    x += Math.cos(angle) * distance;
+    y += Math.sin(angle) * distance;
+    x = Math.max(100, Math.min(canvas.width - 100, x));
+    y = Math.max(100, Math.min(canvas.height - 100, y));
+    waypoints.push({ x, y });
+  }
+
+  waypoints.push({ x: canvas.width - 100, y: 300 });
+  return waypoints;
+}
+
+function createCar(x, y, color) {
+  return {
+    x, y,
+    width: 40,
+    height: 20,
+    color,
+    speed: 0,
+    angle: 0,
+    drifting: false,
+    driftMarks: [],
+    lap: 0,
+    waypointIndex: 0,
+    finished: false,
+    wheelSize: 5,
+    speedFactor: 0.8 + Math.random() * 0.4
+  };
+}
+
+let maps = [generateRandomMap()];
+const car = createCar(100, 300, "red");
+
+const bots = Array.from({ length: 3 }, (_, i) => {
+  const config = randomCustomization();
+  const bot = createCar(100, 100 + i * 100, config.bodyColor);
+  bot.width = config.bodyType === "truck" ? 60 : config.bodyType === "sedan" ? 50 : 40;
+  bot.height = 20;
+  bot.wheelSize = config.wheelSize;
+  return bot;
+});
+
+document.addEventListener("keydown", (e) => {
+  keys[e.key] = true;
+
+  if (gameState === "menu") {
+    if (e.key === "c") {
+      const colors = ["red", "blue", "green", "orange", "purple"];
+      const i = colors.indexOf(customization.bodyColor);
+      customization.bodyColor = colors[(i + 1) % colors.length];
+    }
+    if (e.key === "w") {
+      customization.wheelSize = customization.wheelSize === 5 ? 8 : 5;
+    }
+    if (e.key === "b") {
+      const types = ["compact", "sedan", "truck"];
+      const i = types.indexOf(customization.bodyType);
+      customization.bodyType = types[(i + 1) % types.length];
+    }
+    if (e.key === "1") {
+      multiplayer = false;
+      car.color = customization.bodyColor;
+      car.width = customization.bodyType === "truck" ? 60 : customization.bodyType === "sedan" ? 50 : 40;
+      car.height = 20;
+      car.wheelSize = customization.wheelSize;
+      gameState = "playing";
+      resetRace();
+    }
+    if (e.key === "2") {
+      multiplayer = true;
+      car.color = customization.bodyColor;
+      car.width = customization.bodyType === "truck" ? 60 : customization.bodyType === "sedan" ? 50 : 40;
+      car.height = 20;
+      car.wheelSize = customization.wheelSize;
+      const config = randomCustomization();
+      player2 = createCar(100, 400, config.bodyColor);
+      player2.width = config.bodyType === "truck" ? 60 : config.bodyType === "sedan" ? 50 : 40;
+      player2.height = 20;
+      player2.wheelSize = config.wheelSize;
+      gameState = "playing";
+      resetRace();
+    }
+  }
+
+  if (gameState === "playing" && e.key === "p") {
+    paused = !paused;
+    gameState = paused ? "paused" : "playing";
+  }
+
+  if (e.key === "Shift") car.drifting = true;
+});
+
+document.addEventListener("keyup", (e) => {
+  keys[e.key] = false;
+  if (e.key === "Shift") car.drifting = false;
+});
+
+function drawTrack() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const waypoints = maps[currentMap];
+  ctx.strokeStyle = "#bbb";
+  ctx.lineWidth = 60;
+  ctx.beginPath();
+
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    const p0 = waypoints[Math.max(i - 1, 0)];
+    const p1 = waypoints[i];
+    const p2 = waypoints[i + 1];
+    const p3 = waypoints[Math.min(i + 2, waypoints.length - 1)];
+
+    for (let t = 0; t < 1; t += 0.1) {
+      const x = catmullRom(p0.x, p1.x, p2.x, p3, t);
+      const y = catmullRom(p0.y, p1.y, p2.y, p3, t);
+      if (i === 0 && t === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+  }
+
+  ctx.stroke();
+
+  ctx.fillStyle = "black";
+  ctx.fillRect(50, 200, 10, 200);
+  ctx.fillRect(canvas.width - 60, 200, 10, 200);
+
+  ctx.strokeStyle = "#000";
+  ctx.lineWidth = 5;
+  ctx.strokeRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = "rgba(0,0,0,0.2)";
+  for (const wp of waypoints) {
+    ctx.beginPath();
+    ctx.arc(wp.x, wp.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function updateCar(c, isPlayer = false, keyMap = keys, controlScheme = "arrows") {
+  if (c.finished) return;
+  const waypoints = maps[currentMap];
+
+  if (isPlayer) {
+    const up = controlScheme === "WASD" ? "w" : "ArrowUp";
+    const down = controlScheme === "WASD" ? "s" : "ArrowDown";
+    const left = controlScheme === "WASD" ? "a" : "ArrowLeft";
+    const right = controlScheme === "WASD" ? "d" : "ArrowRight";
+
+    if (keyMap[up]) c.speed += 0.2 * c.speedFactor;
+    if (keyMap[down]) c.speed -= 0.2 * c.speedFactor;
+    if (keyMap[left]) c.angle -= c.drifting ? 0.1 : 0.05;
+    if (keyMap[right]) c.angle += c.drifting ? 0.1 : 0.05;
+    if (c.drifting) {
+      c.driftMarks.push({ x: c.x, y: c.y });
+      if (c.driftMarks.length > 100) c.driftMarks.shift();
+    }
+  } else {
+    const wp = waypoints[c.waypointIndex];
+    const dx = wp.x - c.x;
+        const dy = wp.y - c.y;
+    const targetAngle = Math.atan2(dy, dx);
+    const angleDiff = targetAngle - c.angle;
+    c.angle += Math.sign(angleDiff) * 0.03;
+
+    c.speed += 0.1 * c.speedFactor;
+    if (Math.hypot(dx, dy) < 50) {
+      c.waypointIndex = (c.waypointIndex + 1) % waypoints.length;
+    }
+  }
+
+  c.speed *= 0.98;
+  c.x += Math.cos(c.angle) * c.speed;
+  c.y += Math.sin(c.angle) * c.speed;
+
+  c.x = Math.max(20, Math.min(canvas.width - 20, c.x));
+  c.y = Math.max(20, Math.min(canvas.height - 20, c.y));
+
+  // Finish check for all cars
+  if (!c.finished && c.x > canvas.width - 60 && c.y > 200 && c.y < 400) {
+    c.lap += 1;
+    c.finished = true;
+    c.speed = 0;
+    if ((c === car || c === player2) && !raceFinished) {
+      raceFinished = true;
+      finishTimer = 60;
+    }
+  }
+}
+
+function drawCar(c, wheelSize = 5) {
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate(c.angle);
+  ctx.fillStyle = c.color;
+  ctx.fillRect(-c.width / 2, -c.height / 2, c.width, c.height);
+  ctx.fillStyle = "black";
+  ctx.fillRect(-c.width / 2, -c.height / 2 - wheelSize, 10, wheelSize);
+  ctx.fillRect(c.width / 2 - 10, -c.height / 2 - wheelSize, 10, wheelSize);
+  ctx.fillRect(-c.width / 2, c.height / 2, 10, wheelSize);
+  ctx.fillRect(c.width / 2 - 10, c.height / 2, 10, wheelSize);
+  ctx.restore();
+
+  ctx.fillStyle = "rgba(0,0,0,0.2)";
+  ctx.beginPath();
+  ctx.ellipse(c.x, c.y + 5, c.width / 2, c.height / 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawDriftMarks() {
+  ctx.fillStyle = "rgba(0,0,0,0.3)";
+  for (const mark of car.driftMarks) {
+    ctx.beginPath();
+    ctx.arc(mark.x, mark.y, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  if (multiplayer && player2 && player2.driftMarks) {
+    for (const mark of player2.driftMarks) {
+      ctx.beginPath();
+      ctx.arc(mark.x, mark.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+function drawFinishScreen() {
+  ctx.fillStyle = "rgba(0,0,0,0.7)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "white";
+  ctx.font = "48px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("Race Finished!", canvas.width / 2, canvas.height / 2);
+}
+
+function drawMainMenu() {
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "black";
+  ctx.font = "48px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("Ultimate Racing Game", canvas.width / 2, 100);
+  ctx.font = "28px sans-serif";
+  ctx.fillText("Customize Your Car", canvas.width / 2, 160);
+  ctx.font = "20px sans-serif";
+  ctx.fillText(`Body Color: ${customization.bodyColor} (press C)`, canvas.width / 2, 200);
+  ctx.fillText(`Wheel Size: ${customization.wheelSize} (press W)`, canvas.width / 2, 230);
+  ctx.fillText(`Body Type: ${customization.bodyType} (press B)`, canvas.width / 2, 260);
+  ctx.fillText("Press 1 for Single Player", canvas.width / 2, 320);
+  ctx.fillText("Press 2 for Local Multiplayer", canvas.width / 2, 350);
+
+  const previewCar = {
+    x: canvas.width / 2,
+    y: 420,
+    width: customization.bodyType === "truck" ? 60 : customization.bodyType === "sedan" ? 50 : 40,
+    height: 20,
+    color: customization.bodyColor,
+    angle: 0
+  };
+  drawCar(previewCar, customization.wheelSize);
+}
+
+function drawPauseMenu() {
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "white";
+  ctx.font = "48px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("Paused", canvas.width / 2, 200);
+  ctx.font = "32px sans-serif";
+  ctx.fillText("Press P to Resume", canvas.width / 2, 300);
+}
+
+function resetRace() {
+  maps = [generateRandomMap()];
+  currentMap = 0;
+
+  car.x = 100;
+  car.y = 300;
+  car.speed = 0;
+  car.angle = 0;
+  car.waypointIndex = 0;
+  car.lap = 0;
+  car.finished = false;
+  car.driftMarks = [];
+  car.speedFactor = 0.8 + Math.random() * 0.4;
+
+  if (multiplayer && player2) {
+    const config = randomCustomization();
+    player2.x = 100;
+    player2.y = 400;
+    player2.speed = 0;
+    player2.angle = 0;
+    player2.waypointIndex = 0;
+    player2.lap = 0;
+    player2.finished = false;
+    player2.driftMarks = [];
+    player2.width = config.bodyType === "truck" ? 60 : config.bodyType === "sedan" ? 50 : 40;
+    player2.height = 20;
+    player2.color = config.bodyColor;
+    player2.wheelSize = config.wheelSize;
+    player2.speedFactor = 0.8 + Math.random() * 0.4;
+  }
+
+  bots.forEach((bot, i) => {
+    const config = randomCustomization();
+    bot.x = 100;
+    bot.y = 100 + i * 100;
+    bot.speed = 0;
+    bot.angle = 0;
+    bot.waypointIndex = 0;
+    bot.lap = 0;
+    bot.finished = false;
+    bot.width = config.bodyType === "truck" ? 60 : config.bodyType === "sedan" ? 50 : 40;
+    bot.height = 20;
+    bot.color = config.bodyColor;
+    bot.wheelSize = config.wheelSize;
+    bot.speedFactor = 0.8 + Math.random() * 0.4;
+  });
+
+  raceFinished = false;
+  finishTimer = 0;
+}
+
+function gameLoop() {
+  if (gameState === "menu") {
+    drawMainMenu();
+    requestAnimationFrame(gameLoop);
+    return;
+  }
+
+  if (gameState === "paused") {
+    drawPauseMenu();
+    requestAnimationFrame(gameLoop);
+    return;
+  }
+
+  drawTrack();
+  drawDriftMarks();
+  updateCar(car, true, keys, "arrows");
+  drawCar(car, car.wheelSize);
+
+  if (multiplayer && player2) {
+    updateCar(player2, true, keys, "WASD");
+    drawCar(player2, player2.wheelSize);
+  }
+
+  bots.forEach(bot => {
+    updateCar(bot);
+    drawCar(bot, bot.wheelSize);
+  });
+
+  if (raceFinished) {
+    drawFinishScreen();
+    finishTimer--;
+    if (finishTimer <= 0) {
+      resetRace();
+    }
+  }
+
+  requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+</script>
+</body>
+</html>

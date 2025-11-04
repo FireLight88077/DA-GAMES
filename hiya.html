@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #111;
+    }
+
+    #gameArea {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      perspective: 800px;
+    }
+
+    #player, #cube {
+      position: absolute;
+    }
+
+    #player {
+      width: 50px;
+      height: 50px;
+      background: lime;
+      border-radius: 10px;
+    }
+
+    .cube {
+      width: 100px;
+      height: 100px;
+      transform-style: preserve-3d;
+      animation: spin 5s infinite linear;
+    }
+
+    .face {
+      position: absolute;
+      width: 100px;
+      height: 100px;
+      background: rgba(0, 255, 255, 0.6);
+      border: 2px solid #0ff;
+    }
+
+    .front  { transform: translateZ(50px); }
+    .back   { transform: rotateY(180deg) translateZ(50px); }
+    .right  { transform: rotateY(90deg) translateZ(50px); }
+    .left   { transform: rotateY(-90deg) translateZ(50px); }
+    .top    { transform: rotateX(90deg) translateZ(50px); }
+    .bottom { transform: rotateX(-90deg) translateZ(50px); }
+
+    @keyframes spin {
+      from { transform: rotateX(0deg) rotateY(0deg); }
+      to   { transform: rotateX(360deg) rotateY(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div id="gameArea">
+    <div id="player"></div>
+    <div class="cube" id="cube">
+      <div class="face front"></div>
+      <div class="face back"></div>
+      <div class="face right"></div>
+      <div class="face left"></div>
+      <div class="face top"></div>
+      <div class="face bottom"></div>
+    </div>
+  </div>
+
+  <script>
+    const player = document.getElementById("player");
+    const cube = document.getElementById("cube");
+
+    let playerX = 100, playerY = 100;
+    let cubeX = 300, cubeY = 200;
+    let cubeDX = 2, cubeDY = 2;
+
+    const playerSpeed = 4;
+    const keys = {};
+
+    document.addEventListener("keydown", e => keys[e.key] = true);
+    document.addEventListener("keyup", e => keys[e.key] = false);
+
+    function isBlocked(nextX, nextY) {
+      const pRect = {
+        left: nextX,
+        right: nextX + 50,
+        top: nextY,
+        bottom: nextY + 50
+      };
+      const cRect = {
+        left: cubeX,
+        right: cubeX + 100,
+        top: cubeY,
+        bottom: cubeY + 100
+      };
+
+      return !(
+        pRect.right <= cRect.left ||
+        pRect.left >= cRect.right ||
+        pRect.bottom <= cRect.top ||
+        pRect.top >= cRect.bottom
+      );
+    }
+
+    function updatePositions() {
+      let nextX = playerX;
+      let nextY = playerY;
+
+      if (keys["ArrowUp"]) nextY -= playerSpeed;
+      if (keys["ArrowDown"]) nextY += playerSpeed;
+      if (keys["ArrowLeft"]) nextX -= playerSpeed;
+      if (keys["ArrowRight"]) nextX += playerSpeed;
+
+      // Keep player within bounds
+      nextX = Math.max(0, Math.min(window.innerWidth - 50, nextX));
+      nextY = Math.max(0, Math.min(window.innerHeight - 50, nextY));
+
+      // Block movement if colliding with cube
+      if (!isBlocked(nextX, nextY)) {
+        playerX = nextX;
+        playerY = nextY;
+      }
+
+      // Move cube
+      cubeX += cubeDX;
+      cubeY += cubeDY;
+
+      const maxX = window.innerWidth - 100;
+      const maxY = window.innerHeight - 100;
+
+      if (cubeX <= 0 || cubeX >= maxX) cubeDX *= -1;
+      if (cubeY <= 0 || cubeY >= maxY) cubeDY *= -1;
+
+      // Apply positions
+      player.style.left = playerX + "px";
+      player.style.top = playerY + "px";
+      cube.style.left = cubeX + "px";
+      cube.style.top = cubeY + "px";
+
+      requestAnimationFrame(updatePositions);
+    }
+
+    updatePositions();
+  </script>
+</body>
+</html>
